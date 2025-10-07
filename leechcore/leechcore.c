@@ -16,6 +16,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 //-----------------------------------------------------------------------------
 // Global Context and DLL Attach/Detach:
@@ -39,8 +43,6 @@ LC_MAIN_CONTEXT g_ctx = { 0 };
 //-----------------------------------------------------------------------------
 
 #define LEECHCORE_LOG_DEFAULT_FILENAME      "leechcore.log"
-#define LEECHCORE_LOG_LEVEL_MINIMUM         0
-#define LEECHCORE_LOG_LEVEL_VERBOSE         2
 
 static BOOL LcLogGetEnvString(_In_ LPCSTR szName, _Out_writes_(cchBuffer) LPSTR szValue, _In_ SIZE_T cchBuffer)
 {
@@ -101,6 +103,42 @@ static VOID LcLogFormatTimestamp(_Out_writes_(cchBuffer) LPSTR szBuffer, _In_ SI
     }
 }
 
+static BOOL LcLogPathIsDirectory(_In_z_ LPCSTR szPath)
+{
+#ifdef _WIN32
+    DWORD dwAttr = GetFileAttributesA(szPath);
+    return (dwAttr != INVALID_FILE_ATTRIBUTES) && (dwAttr & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    struct stat st = { 0 };
+    return (0 == stat(szPath, &st)) && S_ISDIR(st.st_mode);
+#endif
+}
+
+static VOID LcLogEnsureTrailingSeparator(_Inout_updates_(cchPath) LPSTR szPath, _In_ SIZE_T cchPath)
+{
+    SIZE_T cch = strlen(szPath);
+    if(!cch) { return; }
+    if((szPath[cch - 1] == '\\') || (szPath[cch - 1] == '/')) { return; }
+#ifdef _WIN32
+    strncat_s(szPath, cchPath, "\\", _TRUNCATE);
+#else
+    strncat_s(szPath, cchPath, "/", _TRUNCATE);
+#endif
+}
+
+static BOOL LcLogGetCurrentDirectory(_Out_writes_(cchPath) LPSTR szPath, _In_ SIZE_T cchPath)
+{
+    ZeroMemory(szPath, cchPath);
+#ifdef _WIN32
+    DWORD cch = GetCurrentDirectoryA((DWORD)cchPath, szPath);
+    if(!cch || (cch >= cchPath)) { return FALSE; }
+#else
+    if(!getcwd(szPath, cchPath)) { return FALSE; }
+#endif
+    LcLogEnsureTrailingSeparator(szPath, cchPath);
+    return TRUE;
+}
+
 static VOID LcLogInitialize()
 {
     CHAR szPath[MAX_PATH] = { 0 };
@@ -109,12 +147,30 @@ static VOID LcLogInitialize()
     if(g_ctx.fLogInitialized) { return; }
     g_ctx.fLogInitialized = TRUE;
     if(LcLogGetEnvDword("LEECHCORE_LOG_DISABLE", 0)) { return; }
-    if(!LcLogGetEnvString("LEECHCORE_LOG_PATH", szPath, _countof(szPath))) {
-        Util_GetPathLib(szFolder);
-        if(szFolder[0]) {
-            strncpy_s(szPath, _countof(szPath), szFolder, _TRUNCATE);
+    if(LcLogGetEnvString("LEECHCORE_LOG_PATH", szPath, _countof(szPath))) {
+        SIZE_T cch = strlen(szPath);
+        if(cch && ((szPath[cch - 1] == '\\') || (szPath[cch - 1] == '/'))) {
+            LcLogEnsureTrailingSeparator(szPath, _countof(szPath));
+            strncat_s(szPath, _countof(szPath), LEECHCORE_LOG_DEFAULT_FILENAME, _TRUNCATE);
+        } else if(LcLogPathIsDirectory(szPath)) {
+            LcLogEnsureTrailingSeparator(szPath, _countof(szPath));
+            strncat_s(szPath, _countof(szPath), LEECHCORE_LOG_DEFAULT_FILENAME, _TRUNCATE);
         }
-        strncat_s(szPath, _countof(szPath), LEECHCORE_LOG_DEFAULT_FILENAME, _TRUNCATE);
+    } else {
+        if(LcLogGetCurrentDirectory(szFolder, _countof(szFolder))) {
+            strncpy_s(szPath, _countof(szPath), szFolder, _TRUNCATE);
+        } else {
+            Util_GetPathLib(szFolder);
+            if(szFolder[0]) {
+                strncpy_s(szPath, _countof(szPath), szFolder, _TRUNCATE);
+            }
+        }
+        if(!szPath[0]) {
+            strncpy_s(szPath, _countof(szPath), LEECHCORE_LOG_DEFAULT_FILENAME, _TRUNCATE);
+        } else {
+            LcLogEnsureTrailingSeparator(szPath, _countof(szPath));
+            strncat_s(szPath, _countof(szPath), LEECHCORE_LOG_DEFAULT_FILENAME, _TRUNCATE);
+        }
     }
     if(0 != fopen_s(&pFile, szPath, "a")) { return; }
     g_ctx.pLogFile = pFile;
@@ -148,22 +204,76 @@ static VOID LcLogClose()
     LeaveCriticalSection(&g_ctx.LogLock);
 }
 
-static VOID LcLogWrite(_In_z_ LPCSTR szFormat, ...)
+static VOID LcLogWriteVa(_In_ DWORD dwLevel, _In_z_ LPCSTR szFormat, va_list ap)
 {
-    va_list ap;
-    if(!g_ctx.fLogEnabled || !g_ctx.pLogFile) { return; }
+    if(!g_ctx.fLogEnabled || !g_ctx.pLogFile || (dwLevel > g_ctx.dwLogVerbosity)) { return; }
     EnterCriticalSection(&g_ctx.LogLock);
     if(g_ctx.pLogFile) {
         CHAR szTs[48] = { 0 };
+        va_list apCopy;
         LcLogFormatTimestamp(szTs, _countof(szTs));
         fprintf(g_ctx.pLogFile, "[%s][tid:%llx] ", szTs, (unsigned long long)LcLogGetThreadId());
-        va_start(ap, szFormat);
-        vfprintf(g_ctx.pLogFile, szFormat, ap);
-        va_end(ap);
+        va_copy(apCopy, ap);
+        vfprintf(g_ctx.pLogFile, szFormat, apCopy);
+        va_end(apCopy);
         fputc('\n', g_ctx.pLogFile);
         if(g_ctx.fLogFlush) { fflush(g_ctx.pLogFile); }
     }
     LeaveCriticalSection(&g_ctx.LogLock);
+}
+
+static VOID LcLogWriteBasic(_In_z_ LPCSTR szFormat, ...)
+{
+    va_list ap;
+    va_start(ap, szFormat);
+    LcLogWriteVa(LEECHCORE_LOG_LEVEL_MINIMUM, szFormat, ap);
+    va_end(ap);
+}
+
+BOOL LcLogIsEnabled(_In_ DWORD dwLevel)
+{
+    return g_ctx.fLogEnabled && g_ctx.pLogFile && (dwLevel <= g_ctx.dwLogVerbosity);
+}
+
+VOID LcLogMessage(_In_ DWORD dwLevel, _In_z_ LPCSTR szFormat, ...)
+{
+    va_list ap;
+    va_start(ap, szFormat);
+    LcLogWriteVa(dwLevel, szFormat, ap);
+    va_end(ap);
+}
+
+VOID LcLogDumpBuffer(
+    _In_ DWORD dwLevel,
+    _In_opt_z_ LPCSTR szPrefix,
+    _In_ QWORD qwBaseAddress,
+    _In_reads_opt_(cb) const BYTE *pb,
+    _In_ DWORD cb)
+{
+    const DWORD cbMaxDump = 256;
+    const DWORD cbPerLine = 16;
+    DWORD i, j;
+    CHAR szLine[128];
+    DWORD cbDump;
+    if(!pb || !cb || !LcLogIsEnabled(dwLevel)) { return; }
+    cbDump = (cb > cbMaxDump) ? cbMaxDump : cb;
+    for(i = 0; i < cbDump; i += cbPerLine) {
+        SIZE_T o = 0;
+        DWORD cbLine = (cbDump - i < cbPerLine) ? (cbDump - i) : cbPerLine;
+        o += _snprintf_s(szLine + o, _countof(szLine) - o, _TRUNCATE, "%s0x%016llx:",
+            szPrefix ? szPrefix : "",
+            (unsigned long long)(qwBaseAddress + i));
+        for(j = 0; j < cbLine; j++) {
+            o += _snprintf_s(szLine + o, _countof(szLine) - o, _TRUNCATE, " %02x", pb[i + j]);
+        }
+        LcLogMessage(dwLevel, "%s", szLine);
+    }
+    if(cbDump < cb) {
+        LcLogMessage(dwLevel,
+            "%s... (%lu bytes truncated - enable verbose logging for full dump)",
+            szPrefix ? szPrefix : "",
+            (unsigned long)(cb - cbDump));
+    }
 }
 
 static double LcLogElapsedMs(_In_opt_ PLC_CONTEXT ctxLC, _In_ QWORD tmStart)
@@ -196,7 +306,7 @@ static VOID LcLogScatterDetails(
 {
     DWORD i;
     if(!g_ctx.fLogEnabled) { return; }
-    LcLogWrite(
+    LcLogWriteBasic(
         "%s: device='%s' handle=%p entries=%lu bytes=0x%llx translated=%u",
         szPhase,
         ctxLC ? ctxLC->Config.szDeviceName : "",
@@ -209,7 +319,7 @@ static VOID LcLogScatterDetails(
     for(i = 0; i < cMEMs; i++) {
         PMEM_SCATTER pMEM = ppMEMs[i];
         QWORD qwOriginal = fTranslated && pMEM->iStack ? MEM_SCATTER_STACK_PEEK(pMEM, 1) : pMEM->qwA;
-        LcLogWrite(
+        LcLogWriteBasic(
             "  [%lu] pa=0x%016llx cb=0x%x status=%s",
             (unsigned long)i,
             (unsigned long long)pMEM->qwA,
@@ -217,7 +327,7 @@ static VOID LcLogScatterDetails(
             fIncludeStatus ? (pMEM->f ? "ok" : "err") : "-"
         );
         if(fTranslated && (qwOriginal != pMEM->qwA)) {
-            LcLogWrite("      original_pa=0x%016llx", (unsigned long long)qwOriginal);
+            LcLogWriteBasic("      original_pa=0x%016llx", (unsigned long long)qwOriginal);
         }
     }
 }
@@ -1049,7 +1159,7 @@ EXPORTED_FUNCTION VOID LcReadScatter(_In_ HANDLE hLC, _In_ DWORD cMEMs, _Inout_ 
     }
     if(g_ctx.fLogEnabled) {
         msElapsed = LcLogElapsedMs(ctxLC, tmStart);
-        LcLogWrite(
+        LcLogWriteBasic(
             "READ_SCATTER_DONE: device='%s' handle=%p entries=%lu bytes=0x%llx duration=%.3fms",
             ctxLC->Config.szDeviceName,
             ctxLC,
@@ -1082,7 +1192,7 @@ EXPORTED_FUNCTION BOOL LcRead(_In_ HANDLE hLC, _In_ QWORD pa, _In_ DWORD cb, _Ou
     if(!ctxLC || ctxLC->version != LC_CONTEXT_VERSION) { return FALSE; }
     if(cb == 0) { return TRUE; }
     if(g_ctx.fLogEnabled) {
-        LcLogWrite(
+        LcLogWriteBasic(
             "READ_BEGIN: device='%s' handle=%p pa=0x%016llx cb=0x%x",
             ctxLC->Config.szDeviceName,
             ctxLC,
@@ -1123,7 +1233,7 @@ EXPORTED_FUNCTION BOOL LcRead(_In_ HANDLE hLC, _In_ QWORD pa, _In_ DWORD cb, _Ou
 fail:
     LocalFree(ppMEMs);
     if(g_ctx.fLogEnabled) {
-        LcLogWrite(
+        LcLogWriteBasic(
             "READ_DONE: device='%s' handle=%p pa=0x%016llx cb=0x%x success=%u duration=%.3fms",
             ctxLC->Config.szDeviceName,
             ctxLC,
@@ -1232,7 +1342,7 @@ EXPORTED_FUNCTION VOID LcWriteScatter(_In_ HANDLE hLC, _In_ DWORD cMEMs, _Inout_
     }
     if(g_ctx.fLogEnabled) {
         msElapsed = LcLogElapsedMs(ctxLC, tmStart);
-        LcLogWrite(
+        LcLogWriteBasic(
             "WRITE_SCATTER_DONE: device='%s' handle=%p entries=%lu bytes=0x%llx duration=%.3fms",
             ctxLC->Config.szDeviceName,
             ctxLC,
@@ -1263,7 +1373,7 @@ EXPORTED_FUNCTION BOOL LcWrite(_In_ HANDLE hLC, _In_ QWORD pa, _In_ DWORD cb, _I
     QWORD tmStart = LcCallStart();
     if(!ctxLC || ctxLC->version != LC_CONTEXT_VERSION) { goto fail; }
     if(g_ctx.fLogEnabled) {
-        LcLogWrite(
+        LcLogWriteBasic(
             "WRITE_BEGIN: device='%s' handle=%p pa=0x%016llx cb=0x%x",
             ctxLC->Config.szDeviceName,
             ctxLC,
@@ -1299,7 +1409,7 @@ EXPORTED_FUNCTION BOOL LcWrite(_In_ HANDLE hLC, _In_ QWORD pa, _In_ DWORD cb, _I
 fail:
     LocalFree(pbBuffer);
     if(g_ctx.fLogEnabled) {
-        LcLogWrite(
+        LcLogWriteBasic(
             "WRITE_DONE: device='%s' handle=%p pa=0x%016llx cb=0x%x success=%u duration=%.3fms",
             ctxLC->Config.szDeviceName,
             ctxLC,

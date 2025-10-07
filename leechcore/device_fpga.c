@@ -1218,6 +1218,13 @@ BOOL DeviceFPGA_ConfigRead(_In_ PDEVICE_CONTEXT_FPGA ctx, _In_ WORD wBaseAddr, _
     DWORD i, j, status, dwStatus, dwData, cbRxTx = 0;
     PDWORD pdwData;
     WORD wAddr;
+    if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+        LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+            "FPGA ConfigRead: base=0x%04x size=0x%x flags=0x%04x",
+            (unsigned int)wBaseAddr,
+            (unsigned int)cb,
+            (unsigned int)flags);
+    }
     if(!cb || (wBaseAddr + cb > 0x1000)) { goto fail; }
     if(!(pbRxTx = LocalAlloc(LMEM_ZEROINIT, 0x20000))) { goto fail; }
     // WRITE requests
@@ -1272,6 +1279,15 @@ BOOL DeviceFPGA_ConfigRead(_In_ PDEVICE_CONTEXT_FPGA ctx, _In_ WORD wBaseAddr, _
     fReturn = TRUE;
 fail:
     LocalFree(pbRxTx);
+    if(fReturn) {
+        LcLogDumpBuffer(LEECHCORE_LOG_LEVEL_MINIMUM, "FPGA ConfigRead data ", (QWORD)wBaseAddr, pb, cb);
+    } else if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+        LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+            "FPGA ConfigRead FAILED: base=0x%04x size=0x%x flags=0x%04x",
+            (unsigned int)wBaseAddr,
+            (unsigned int)cb,
+            (unsigned int)flags);
+    }
     return fReturn;
 }
 
@@ -1289,6 +1305,16 @@ BOOL DeviceFPGA_ConfigWriteEx(_In_ PDEVICE_CONTEXT_FPGA ctx, _In_ WORD wBaseAddr
 {
     DWORD status, cbTx;
     BYTE pbTx[0x8];
+    if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+        LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+            "FPGA ConfigWriteEx: base=0x%04x flags=0x%04x data=%02x %02x mask=%02x %02x",
+            (unsigned int)wBaseAddr,
+            (unsigned int)flags,
+            pbData ? pbData[0] : 0,
+            pbData ? pbData[1] : 0,
+            pbMask ? pbMask[0] : 0,
+            pbMask ? pbMask[1] : 0);
+    }
     // WRITE requests
     pbTx[0] = pbData[0];                            // [0] = byte_value_addr
     pbTx[1] = pbData[1];                            // [1] = byte_value_addr+1
@@ -1299,6 +1325,12 @@ BOOL DeviceFPGA_ConfigWriteEx(_In_ PDEVICE_CONTEXT_FPGA ctx, _In_ WORD wBaseAddr
     pbTx[6] = 0x20 | (flags & 0x03);                // [6] = target = bit[0:1], read = bit[4], write = bit[5]
     pbTx[7] = 0x77;                                 // [7] = MAGIC 0x77
     status = ctx->dev.pfnFT_WritePipe(ctx->dev.hFTDI, 0x02, pbTx, 8, &cbTx, NULL);
+    if(status && LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+        LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+            "FPGA ConfigWriteEx FAILED: base=0x%04x status=0x%08x",
+            (unsigned int)wBaseAddr,
+            (unsigned int)status);
+    }
     return (status == 0);
 }
 
@@ -1317,7 +1349,24 @@ BOOL DeviceFPGA_ConfigWrite(_In_ PDEVICE_CONTEXT_FPGA ctx, _In_ WORD wBaseAddr, 
     BYTE pbTx[0x800];
     DWORD status, cbTx = 0;
     WORD i = 0, wAddr;
-    if(!cb || (wBaseAddr + cb > 0x1000)) { return FALSE; }
+    if(!cb || (wBaseAddr + cb > 0x1000)) {
+        if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+            LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+                "FPGA ConfigWrite INVALID PARAM: base=0x%04x size=0x%x flags=0x%04x",
+                (unsigned int)wBaseAddr,
+                (unsigned int)cb,
+                (unsigned int)flags);
+        }
+        return FALSE;
+    }
+    if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+        LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+            "FPGA ConfigWrite: base=0x%04x size=0x%x flags=0x%04x",
+            (unsigned int)wBaseAddr,
+            (unsigned int)cb,
+            (unsigned int)flags);
+        LcLogDumpBuffer(LEECHCORE_LOG_LEVEL_MINIMUM, "FPGA ConfigWrite data ", (QWORD)wBaseAddr, pb, cb);
+    }
     // BYTE ALIGN (if required)
     if(wBaseAddr % 2) {
         wAddr = (wBaseAddr - 1) | (flags & 0xC000);
@@ -1346,13 +1395,29 @@ BOOL DeviceFPGA_ConfigWrite(_In_ PDEVICE_CONTEXT_FPGA ctx, _In_ WORD wBaseAddr, 
         cbTx += 8;
         if(cbTx >= 0x3f0) {
             status = ctx->dev.pfnFT_WritePipe(ctx->dev.hFTDI, 0x02, pbTx, cbTx, &cbTx, NULL);
-            if(status) { return FALSE; }
+            if(status) {
+                if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+                    LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+                        "FPGA ConfigWrite FAILED: base=0x%04x status=0x%08x",
+                        (unsigned int)(wBaseAddr + i),
+                        (unsigned int)status);
+                }
+                return FALSE;
+            }
             cbTx = 0;
         }
     }
     if(cbTx) {
         status = ctx->dev.pfnFT_WritePipe(ctx->dev.hFTDI, 0x02, pbTx, cbTx, &cbTx, NULL);
-        if(status) { return FALSE; }
+        if(status) {
+            if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+                LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+                    "FPGA ConfigWrite FAILED: base=0x%04x status=0x%08x",
+                    (unsigned int)(wBaseAddr + i),
+                    (unsigned int)status);
+            }
+            return FALSE;
+        }
     }
     return TRUE;
 }
@@ -3277,13 +3342,40 @@ fail:
 VOID DeviceFPGA_ReadScatter_DoLock(_In_ PLC_CONTEXT ctxLC, _In_ DWORD cMEMs, _Inout_ PPMEM_SCATTER ppMEMs)
 {
     PDEVICE_CONTEXT_FPGA ctx = (PDEVICE_CONTEXT_FPGA)ctxLC->hDevice;
-    if(!ctx->wDeviceId) { return; }
+    DWORD i;
+    PMEM_SCATTER pMEM;
+    if(!ctx->wDeviceId) {
+        if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+            LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM, "FPGA ReadScatter skipped: device not initialized");
+        }
+        return;
+    }
+    if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+        LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM, "FPGA ReadScatter request: entries=%lu", (unsigned long)cMEMs);
+        for(i = 0; i < cMEMs; i++) {
+            pMEM = ppMEMs[i];
+            if(!pMEM || MEM_SCATTER_ADDR_ISINVALID(pMEM)) { continue; }
+            LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+                "  req[%lu]: pa=0x%016llx size=0x%x", (unsigned long)i, (unsigned long long)pMEM->qwA, pMEM->cb);
+        }
+    }
     if(ctx->async2.fEnabled) {
         DeviceFPGA_Async2_ReadScatter(ctxLC, cMEMs, ppMEMs, ctx->perf.RETRY_ON_ERROR);
     } else {
         EnterCriticalSection(&ctx->Lock);
         DeviceFPGA_Synch_ReadScatter(ctxLC, cMEMs, ppMEMs);
         LeaveCriticalSection(&ctx->Lock);
+    }
+    if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+        for(i = 0; i < cMEMs; i++) {
+            pMEM = ppMEMs[i];
+            if(!pMEM || MEM_SCATTER_ADDR_ISINVALID(pMEM)) { continue; }
+            LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+                "  rsp[%lu]: status=%s", (unsigned long)i, pMEM->f ? "ok" : "err");
+            if(pMEM->f) {
+                LcLogDumpBuffer(LEECHCORE_LOG_LEVEL_MINIMUM, "    data ", pMEM->qwA, pMEM->pb, pMEM->cb);
+            }
+        }
     }
 }
 
@@ -3378,6 +3470,7 @@ BOOL DeviceFPGA_WriteMEM_TXP(_In_ PLC_CONTEXT ctxLC, _Inout_ PDEVICE_CONTEXT_FPG
     PBYTE pbTlp = (PBYTE)txbuf;
     PTLP_HDR_MRdWr32 hdrWr32 = (PTLP_HDR_MRdWr32)txbuf;
     PTLP_HDR_MRdWr64 hdrWr64 = (PTLP_HDR_MRdWr64)txbuf;
+    BOOL fResult;
     bTag++;
     if(bTag == 0) {
         bTag = 0xe0;
@@ -3413,11 +3506,21 @@ BOOL DeviceFPGA_WriteMEM_TXP(_In_ PLC_CONTEXT ctxLC, _Inout_ PDEVICE_CONTEXT_FPG
         memcpy(pbTlp + 16, pb, cb);
         cbTlp = (16 + cb + 3) & ~0x3;
     }
-    if(ctx->perf.FLAGS & DEVICE_PERFORMANCE_FLAG_FASTWRITE) {
-        return DeviceFPGA_TxTlp_FastWrite_NoLock(ctxLC, ctx, pbTlp, cbTlp, FALSE, FALSE);
-    } else {
-        return DeviceFPGA_TxTlp(ctxLC, ctx, pbTlp, cbTlp, FALSE, FALSE);
+    if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_VERBOSE)) {
+        LcLogMessage(LEECHCORE_LOG_LEVEL_VERBOSE,
+            "FPGA WriteMEM_TXP: pa=0x%016llx size=0x%x firstBE=0x%02x lastBE=0x%02x", (unsigned long long)pa, cb, bFirstBE, bLastBE);
+        LcLogDumpBuffer(LEECHCORE_LOG_LEVEL_VERBOSE, "    payload ", pa, pb, cb);
     }
+    if(ctx->perf.FLAGS & DEVICE_PERFORMANCE_FLAG_FASTWRITE) {
+        fResult = DeviceFPGA_TxTlp_FastWrite_NoLock(ctxLC, ctx, pbTlp, cbTlp, FALSE, FALSE);
+    } else {
+        fResult = DeviceFPGA_TxTlp(ctxLC, ctx, pbTlp, cbTlp, FALSE, FALSE);
+    }
+    if(!fResult && LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+        LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+            "FPGA WriteMEM_TXP FAILED: pa=0x%016llx size=0x%x", (unsigned long long)pa, cb);
+    }
+    return fResult;
 }
 
 VOID DeviceFPGA_WriteScatter(_In_ PLC_CONTEXT ctxLC, _In_ DWORD cpMEMs, _Inout_ PPMEM_SCATTER ppMEMs)
@@ -3470,6 +3573,18 @@ VOID DeviceFPGA_WriteScatter(_In_ PLC_CONTEXT ctxLC, _In_ DWORD cpMEMs, _Inout_ 
 VOID DeviceFPGA_WriteScatter_DoLock(_In_ PLC_CONTEXT ctxLC, _In_ DWORD cpMEMs, _Inout_ PPMEM_SCATTER ppMEMs)
 {
     PDEVICE_CONTEXT_FPGA ctx = (PDEVICE_CONTEXT_FPGA)ctxLC->hDevice;
+    DWORD i;
+    PMEM_SCATTER pMEM;
+    if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+        LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM, "FPGA WriteScatter request: entries=%lu", (unsigned long)cpMEMs);
+        for(i = 0; i < cpMEMs; i++) {
+            pMEM = ppMEMs[i];
+            if(!pMEM || MEM_SCATTER_ADDR_ISINVALID(pMEM)) { continue; }
+            LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+                "  req[%lu]: pa=0x%016llx size=0x%x", (unsigned long)i, (unsigned long long)pMEM->qwA, pMEM->cb);
+            LcLogDumpBuffer(LEECHCORE_LOG_LEVEL_MINIMUM, "    data ", pMEM->qwA, pMEM->pb, pMEM->cb);
+        }
+    }
     if(ctx->perf.FLAGS & DEVICE_PERFORMANCE_FLAG_FASTWRITE) {
         DeviceFPGA_WriteScatter(ctxLC, cpMEMs, ppMEMs);
     } else if(ctx->async2.fEnabled) {
@@ -3478,6 +3593,14 @@ VOID DeviceFPGA_WriteScatter_DoLock(_In_ PLC_CONTEXT ctxLC, _In_ DWORD cpMEMs, _
         EnterCriticalSection(&ctx->Lock);
         DeviceFPGA_WriteScatter(ctxLC, cpMEMs, ppMEMs);
         LeaveCriticalSection(&ctx->Lock);
+    }
+    if(LcLogIsEnabled(LEECHCORE_LOG_LEVEL_MINIMUM)) {
+        for(i = 0; i < cpMEMs; i++) {
+            pMEM = ppMEMs[i];
+            if(!pMEM || MEM_SCATTER_ADDR_ISINVALID(pMEM)) { continue; }
+            LcLogMessage(LEECHCORE_LOG_LEVEL_MINIMUM,
+                "  rsp[%lu]: status=%s", (unsigned long)i, pMEM->f ? "ok" : "err");
+        }
     }
 }
 
