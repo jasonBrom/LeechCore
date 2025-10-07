@@ -11,16 +11,216 @@
 #include "util.h"
 #include "version.h"
 
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 //-----------------------------------------------------------------------------
 // Global Context and DLL Attach/Detach:
 //-----------------------------------------------------------------------------
 
 typedef struct tdLC_MAIN_CONTEXT {
     CRITICAL_SECTION Lock;
+    CRITICAL_SECTION LogLock;
     HANDLE FLink;
+    FILE *pLogFile;
+    BOOL fLogEnabled;
+    BOOL fLogFlush;
+    BOOL fLogInitialized;
+    DWORD dwLogVerbosity;
 } LC_MAIN_CONTEXT, *PLC_MAIN_CONTEXT;
 
 LC_MAIN_CONTEXT g_ctx = { 0 };
+
+//-----------------------------------------------------------------------------
+// Logging helpers:
+//-----------------------------------------------------------------------------
+
+#define LEECHCORE_LOG_DEFAULT_FILENAME      "leechcore.log"
+#define LEECHCORE_LOG_LEVEL_MINIMUM         0
+#define LEECHCORE_LOG_LEVEL_VERBOSE         2
+
+static BOOL LcLogGetEnvString(_In_ LPCSTR szName, _Out_writes_(cchBuffer) LPSTR szValue, _In_ SIZE_T cchBuffer)
+{
+    if(!szValue || !cchBuffer) { return FALSE; }
+    ZeroMemory(szValue, cchBuffer);
+#ifdef _WIN32
+    DWORD cchValue = GetEnvironmentVariableA(szName, szValue, (DWORD)cchBuffer);
+    if(cchValue && (cchValue < cchBuffer)) { return TRUE; }
+#else
+    LPCSTR szEnv = getenv(szName);
+    if(szEnv && szEnv[0]) {
+        strncpy_s(szValue, cchBuffer, szEnv, _TRUNCATE);
+        return TRUE;
+    }
+#endif
+    return FALSE;
+}
+
+static DWORD LcLogGetEnvDword(_In_ LPCSTR szName, _In_ DWORD dwDefault)
+{
+    CHAR szValue[32] = { 0 };
+    if(!LcLogGetEnvString(szName, szValue, _countof(szValue))) { return dwDefault; }
+    return (DWORD)strtoul(szValue, NULL, 0);
+}
+
+static QWORD LcLogGetThreadId()
+{
+#ifdef _WIN32
+    return (QWORD)GetCurrentThreadId();
+#else
+    return (QWORD)(uintptr_t)pthread_self();
+#endif
+}
+
+static VOID LcLogFormatTimestamp(_Out_writes_(cchBuffer) LPSTR szBuffer, _In_ SIZE_T cchBuffer)
+{
+    SYSTEMTIME st = { 0 };
+    ZeroMemory(szBuffer, cchBuffer);
+    GetLocalTime(&st);
+    {
+        BOOL fLinuxStyle = (st.wYear < 1900);
+        UINT wYear = fLinuxStyle ? (st.wYear + 1900) : st.wYear;
+        UINT wMonth = fLinuxStyle ? (st.wMonth + 1) : st.wMonth;
+        UINT wDay = st.wDay ? st.wDay : 1;
+        _snprintf_s(
+            szBuffer,
+            cchBuffer,
+            _TRUNCATE,
+            "%04u-%02u-%02u %02u:%02u:%02u.%03u",
+            wYear,
+            wMonth,
+            wDay,
+            (UINT)st.wHour,
+            (UINT)st.wMinute,
+            (UINT)st.wSecond,
+            (UINT)st.wMilliseconds
+        );
+    }
+}
+
+static VOID LcLogInitialize()
+{
+    CHAR szPath[MAX_PATH] = { 0 };
+    CHAR szFolder[MAX_PATH] = { 0 };
+    FILE *pFile = NULL;
+    if(g_ctx.fLogInitialized) { return; }
+    g_ctx.fLogInitialized = TRUE;
+    if(LcLogGetEnvDword("LEECHCORE_LOG_DISABLE", 0)) { return; }
+    if(!LcLogGetEnvString("LEECHCORE_LOG_PATH", szPath, _countof(szPath))) {
+        Util_GetPathLib(szFolder);
+        if(szFolder[0]) {
+            strncpy_s(szPath, _countof(szPath), szFolder, _TRUNCATE);
+        }
+        strncat_s(szPath, _countof(szPath), LEECHCORE_LOG_DEFAULT_FILENAME, _TRUNCATE);
+    }
+    if(0 != fopen_s(&pFile, szPath, "a")) { return; }
+    g_ctx.pLogFile = pFile;
+    g_ctx.fLogEnabled = TRUE;
+    g_ctx.fLogFlush = !!LcLogGetEnvDword("LEECHCORE_LOG_FLUSH", 0);
+    {
+        DWORD dwLevel = LcLogGetEnvDword("LEECHCORE_LOG_LEVEL", 1);
+        g_ctx.dwLogVerbosity = (dwLevel < LEECHCORE_LOG_LEVEL_MINIMUM) ? LEECHCORE_LOG_LEVEL_MINIMUM : dwLevel;
+    }
+    {
+        CHAR szTs[48] = { 0 };
+        LcLogFormatTimestamp(szTs, _countof(szTs));
+        fprintf(g_ctx.pLogFile, "[%s] Logging initialized at '%s' (level=%lu, flush=%u)\n", szTs, szPath, g_ctx.dwLogVerbosity, g_ctx.fLogFlush);
+        fflush(g_ctx.pLogFile);
+    }
+}
+
+static VOID LcLogClose()
+{
+    if(!g_ctx.fLogEnabled) { return; }
+    EnterCriticalSection(&g_ctx.LogLock);
+    if(g_ctx.pLogFile) {
+        CHAR szTs[48] = { 0 };
+        LcLogFormatTimestamp(szTs, _countof(szTs));
+        fprintf(g_ctx.pLogFile, "[%s] Logging shutdown.\n", szTs);
+        fflush(g_ctx.pLogFile);
+        fclose(g_ctx.pLogFile);
+    }
+    g_ctx.pLogFile = NULL;
+    g_ctx.fLogEnabled = FALSE;
+    LeaveCriticalSection(&g_ctx.LogLock);
+}
+
+static VOID LcLogWrite(_In_z_ LPCSTR szFormat, ...)
+{
+    va_list ap;
+    if(!g_ctx.fLogEnabled || !g_ctx.pLogFile) { return; }
+    EnterCriticalSection(&g_ctx.LogLock);
+    if(g_ctx.pLogFile) {
+        CHAR szTs[48] = { 0 };
+        LcLogFormatTimestamp(szTs, _countof(szTs));
+        fprintf(g_ctx.pLogFile, "[%s][tid:%llx] ", szTs, (unsigned long long)LcLogGetThreadId());
+        va_start(ap, szFormat);
+        vfprintf(g_ctx.pLogFile, szFormat, ap);
+        va_end(ap);
+        fputc('\n', g_ctx.pLogFile);
+        if(g_ctx.fLogFlush) { fflush(g_ctx.pLogFile); }
+    }
+    LeaveCriticalSection(&g_ctx.LogLock);
+}
+
+static double LcLogElapsedMs(_In_opt_ PLC_CONTEXT ctxLC, _In_ QWORD tmStart)
+{
+    QWORD tmEnd;
+    if(!ctxLC || !tmStart) { return 0.0; }
+    QueryPerformanceCounter((PLARGE_INTEGER)&tmEnd);
+    if(!ctxLC->CallStat.qwFreq) { return 0.0; }
+    return ((double)(tmEnd - tmStart) * 1000.0) / (double)ctxLC->CallStat.qwFreq;
+}
+
+static QWORD LcLogScatterTotalBytes(_In_ DWORD cMEMs, _Inout_ PPMEM_SCATTER ppMEMs)
+{
+    QWORD cbTotal = 0;
+    DWORD i;
+    for(i = 0; i < cMEMs; i++) {
+        if(ppMEMs[i]) { cbTotal += ppMEMs[i]->cb; }
+    }
+    return cbTotal;
+}
+
+static VOID LcLogScatterDetails(
+    _In_ LPCSTR szPhase,
+    _In_ PLC_CONTEXT ctxLC,
+    _In_ DWORD cMEMs,
+    _Inout_ PPMEM_SCATTER ppMEMs,
+    _In_ BOOL fTranslated,
+    _In_ BOOL fIncludeStatus
+)
+{
+    DWORD i;
+    if(!g_ctx.fLogEnabled) { return; }
+    LcLogWrite(
+        "%s: device='%s' handle=%p entries=%lu bytes=0x%llx translated=%u",
+        szPhase,
+        ctxLC ? ctxLC->Config.szDeviceName : "",
+        ctxLC,
+        (unsigned long)cMEMs,
+        (unsigned long long)LcLogScatterTotalBytes(cMEMs, ppMEMs),
+        fTranslated
+    );
+    if(g_ctx.dwLogVerbosity < LEECHCORE_LOG_LEVEL_VERBOSE) { return; }
+    for(i = 0; i < cMEMs; i++) {
+        PMEM_SCATTER pMEM = ppMEMs[i];
+        QWORD qwOriginal = fTranslated && pMEM->iStack ? MEM_SCATTER_STACK_PEEK(pMEM, 1) : pMEM->qwA;
+        LcLogWrite(
+            "  [%lu] pa=0x%016llx cb=0x%x status=%s",
+            (unsigned long)i,
+            (unsigned long long)pMEM->qwA,
+            pMEM->cb,
+            fIncludeStatus ? (pMEM->f ? "ok" : "err") : "-"
+        );
+        if(fTranslated && (qwOriginal != pMEM->qwA)) {
+            LcLogWrite("      original_pa=0x%016llx", (unsigned long long)qwOriginal);
+        }
+    }
+}
 
 _Success_(return) BOOL Device3380_Open(_Inout_ PLC_CONTEXT ctxLC, _Out_opt_ PPLC_CONFIG_ERRORINFO ppLcCreateErrorInfo);
 _Success_(return) BOOL DeviceFile_Open(_Inout_ PLC_CONTEXT ctxLC, _Out_opt_ PPLC_CONFIG_ERRORINFO ppLcCreateErrorInfo);
@@ -42,10 +242,14 @@ BOOL WINAPI DllMain(_In_ HINSTANCE hinstDLL, _In_ DWORD fdwReason, _In_ PVOID lp
     if(fdwReason == DLL_PROCESS_ATTACH) {
         ZeroMemory(&g_ctx, sizeof(LC_MAIN_CONTEXT));
         InitializeCriticalSection(&g_ctx.Lock);
+        InitializeCriticalSection(&g_ctx.LogLock);
+        LcLogInitialize();
     }
     if(fdwReason == DLL_PROCESS_DETACH) {
         LcCloseAll();
+        LcLogClose();
         DeleteCriticalSection(&g_ctx.Lock);
+        DeleteCriticalSection(&g_ctx.LogLock);
         ZeroMemory(&g_ctx, sizeof(LC_MAIN_CONTEXT));
     }
     return TRUE;
@@ -56,12 +260,16 @@ __attribute__((constructor)) VOID LcAttach()
 {
     ZeroMemory(&g_ctx, sizeof(LC_MAIN_CONTEXT));
     InitializeCriticalSection(&g_ctx.Lock);
+    InitializeCriticalSection(&g_ctx.LogLock);
+    LcLogInitialize();
 }
 
 __attribute__((destructor)) VOID LcDetach()
 {
     LcCloseAll();
+    LcLogClose();
     DeleteCriticalSection(&g_ctx.Lock);
+    DeleteCriticalSection(&g_ctx.LogLock);
     ZeroMemory(&g_ctx, sizeof(LC_MAIN_CONTEXT));
 }
 #endif /* LINUX || MACOS */
@@ -810,10 +1018,13 @@ EXPORTED_FUNCTION VOID LcReadScatter(_In_ HANDLE hLC, _In_ DWORD cMEMs, _Inout_ 
 {
     PLC_CONTEXT ctxLC = (PLC_CONTEXT)hLC;
     QWORD i, tmStart = LcCallStart();
+    double msElapsed;
     if(!ctxLC || ctxLC->version != LC_CONTEXT_VERSION) { return; }
+    LcLogScatterDetails("READ_SCATTER_BEGIN", ctxLC, cMEMs, ppMEMs, FALSE, FALSE);
     if(ctxLC->Config.fRemote && ctxLC->pfnReadScatter) {
         // REMOTE
         ctxLC->pfnReadScatter(ctxLC, cMEMs, ppMEMs);
+        LcLogScatterDetails("READ_SCATTER_RESULT", ctxLC, cMEMs, ppMEMs, FALSE, TRUE);
     } else {
         // LOCAL LEECHCORE
         // 1: TRANSLATE
@@ -821,6 +1032,7 @@ EXPORTED_FUNCTION VOID LcReadScatter(_In_ HANDLE hLC, _In_ DWORD cMEMs, _Inout_ 
             MEM_SCATTER_STACK_PUSH(ppMEMs[i], ppMEMs[i]->qwA);
         }
         LcMemMap_TranslateMEMs(ctxLC, cMEMs, ppMEMs);
+        LcLogScatterDetails("READ_SCATTER_TRANSLATED", ctxLC, cMEMs, ppMEMs, TRUE, FALSE);
         // 2: FETCH
         LcLockAcquire(ctxLC);
         if(ctxLC->pfnReadScatter) {
@@ -829,10 +1041,22 @@ EXPORTED_FUNCTION VOID LcReadScatter(_In_ HANDLE hLC, _In_ DWORD cMEMs, _Inout_ 
             LcReadContigious_ReadScatterGather(ctxLC, cMEMs, ppMEMs);
         }
         LcLockRelease(ctxLC);
+        LcLogScatterDetails("READ_SCATTER_RESULT", ctxLC, cMEMs, ppMEMs, TRUE, TRUE);
         // 3: RESTORE
         for(i = 0; i < cMEMs; i++) {
             ppMEMs[i]->qwA = MEM_SCATTER_STACK_POP(ppMEMs[i]);
         }
+    }
+    if(g_ctx.fLogEnabled) {
+        msElapsed = LcLogElapsedMs(ctxLC, tmStart);
+        LcLogWrite(
+            "READ_SCATTER_DONE: device='%s' handle=%p entries=%lu bytes=0x%llx duration=%.3fms",
+            ctxLC->Config.szDeviceName,
+            ctxLC,
+            (unsigned long)cMEMs,
+            (unsigned long long)LcLogScatterTotalBytes(cMEMs, ppMEMs),
+            msElapsed
+        );
     }
     LcCallEnd(ctxLC, LC_STATISTICS_ID_READSCATTER, tmStart);
 }
@@ -857,6 +1081,15 @@ EXPORTED_FUNCTION BOOL LcRead(_In_ HANDLE hLC, _In_ QWORD pa, _In_ DWORD cb, _Ou
     QWORD tmStart = LcCallStart();
     if(!ctxLC || ctxLC->version != LC_CONTEXT_VERSION) { return FALSE; }
     if(cb == 0) { return TRUE; }
+    if(g_ctx.fLogEnabled) {
+        LcLogWrite(
+            "READ_BEGIN: device='%s' handle=%p pa=0x%016llx cb=0x%x",
+            ctxLC->Config.szDeviceName,
+            ctxLC,
+            (unsigned long long)pa,
+            cb
+        );
+    }
     cMEMs = ((pa & 0xfff) + cb + 0xfff) >> 12;
     if(cMEMs == 0) { return FALSE; }
     fFirst = (pa & 0xfff) || (cb < 0x1000);
@@ -889,6 +1122,17 @@ EXPORTED_FUNCTION BOOL LcRead(_In_ HANDLE hLC, _In_ QWORD pa, _In_ DWORD cb, _Ou
     fResult = TRUE;
 fail:
     LocalFree(ppMEMs);
+    if(g_ctx.fLogEnabled) {
+        LcLogWrite(
+            "READ_DONE: device='%s' handle=%p pa=0x%016llx cb=0x%x success=%u duration=%.3fms",
+            ctxLC->Config.szDeviceName,
+            ctxLC,
+            (unsigned long long)pa,
+            cb,
+            fResult,
+            LcLogElapsedMs(ctxLC, tmStart)
+        );
+    }
     LcCallEnd(ctxLC, LC_STATISTICS_ID_READ, tmStart);
     return fResult;
 }
@@ -955,12 +1199,15 @@ EXPORTED_FUNCTION VOID LcWriteScatter(_In_ HANDLE hLC, _In_ DWORD cMEMs, _Inout_
 {
     PLC_CONTEXT ctxLC = (PLC_CONTEXT)hLC;
     QWORD i, tmStart = LcCallStart();
+    double msElapsed;
     if(!ctxLC || ctxLC->version != LC_CONTEXT_VERSION) { return; }
     if(!ctxLC->pfnWriteScatter && !ctxLC->pfnWriteContigious) { return; }
     if(!cMEMs) { return; }
+    LcLogScatterDetails("WRITE_SCATTER_BEGIN", ctxLC, cMEMs, ppMEMs, FALSE, FALSE);
     if(ctxLC->Config.fRemote && ctxLC->pfnWriteScatter) {
         // REMOTE
         ctxLC->pfnWriteScatter(ctxLC, cMEMs, ppMEMs);
+        LcLogScatterDetails("WRITE_SCATTER_RESULT", ctxLC, cMEMs, ppMEMs, FALSE, TRUE);
     } else {
         // LOCAL LEECHCORE
         // 1: TRANSLATE
@@ -968,6 +1215,7 @@ EXPORTED_FUNCTION VOID LcWriteScatter(_In_ HANDLE hLC, _In_ DWORD cMEMs, _Inout_
             MEM_SCATTER_STACK_PUSH(ppMEMs[i], ppMEMs[i]->qwA);
         }
         LcMemMap_TranslateMEMs(ctxLC, cMEMs, ppMEMs);
+        LcLogScatterDetails("WRITE_SCATTER_TRANSLATED", ctxLC, cMEMs, ppMEMs, TRUE, FALSE);
         // 2: FETCH
         LcLockAcquire(ctxLC);
         if(ctxLC->pfnWriteScatter) {
@@ -976,10 +1224,22 @@ EXPORTED_FUNCTION VOID LcWriteScatter(_In_ HANDLE hLC, _In_ DWORD cMEMs, _Inout_
             LcWriteScatter_GatherContigious(ctxLC, cMEMs, ppMEMs);
         }
         LcLockRelease(ctxLC);
+        LcLogScatterDetails("WRITE_SCATTER_RESULT", ctxLC, cMEMs, ppMEMs, TRUE, TRUE);
         // 3: RESTORE
         for(i = 0; i < cMEMs; i++) {
             ppMEMs[i]->qwA = MEM_SCATTER_STACK_POP(ppMEMs[i]);
         }
+    }
+    if(g_ctx.fLogEnabled) {
+        msElapsed = LcLogElapsedMs(ctxLC, tmStart);
+        LcLogWrite(
+            "WRITE_SCATTER_DONE: device='%s' handle=%p entries=%lu bytes=0x%llx duration=%.3fms",
+            ctxLC->Config.szDeviceName,
+            ctxLC,
+            (unsigned long)cMEMs,
+            (unsigned long long)LcLogScatterTotalBytes(cMEMs, ppMEMs),
+            msElapsed
+        );
     }
     LcCallEnd(ctxLC, LC_STATISTICS_ID_WRITESCATTER, tmStart);
 }
@@ -1002,6 +1262,15 @@ EXPORTED_FUNCTION BOOL LcWrite(_In_ HANDLE hLC, _In_ QWORD pa, _In_ DWORD cb, _I
     PLC_CONTEXT ctxLC = (PLC_CONTEXT)hLC;
     QWORD tmStart = LcCallStart();
     if(!ctxLC || ctxLC->version != LC_CONTEXT_VERSION) { goto fail; }
+    if(g_ctx.fLogEnabled) {
+        LcLogWrite(
+            "WRITE_BEGIN: device='%s' handle=%p pa=0x%016llx cb=0x%x",
+            ctxLC->Config.szDeviceName,
+            ctxLC,
+            (unsigned long long)pa,
+            cb
+        );
+    }
     // allocate
     cMEMs = (DWORD)(((pa & 0xfff) + cb + 0xfff) >> 12);
     if(!(pbBuffer = (PBYTE)LocalAlloc(LMEM_ZEROINIT, cMEMs * (sizeof(MEM_SCATTER) + sizeof(PMEM_SCATTER))))) { goto fail; }
@@ -1029,6 +1298,17 @@ EXPORTED_FUNCTION BOOL LcWrite(_In_ HANDLE hLC, _In_ QWORD pa, _In_ DWORD cb, _I
     fResult = TRUE;
 fail:
     LocalFree(pbBuffer);
+    if(g_ctx.fLogEnabled) {
+        LcLogWrite(
+            "WRITE_DONE: device='%s' handle=%p pa=0x%016llx cb=0x%x success=%u duration=%.3fms",
+            ctxLC->Config.szDeviceName,
+            ctxLC,
+            (unsigned long long)pa,
+            cb,
+            fResult,
+            LcLogElapsedMs(ctxLC, tmStart)
+        );
+    }
     LcCallEnd(ctxLC, LC_STATISTICS_ID_WRITE, tmStart);
     return fResult;
 }

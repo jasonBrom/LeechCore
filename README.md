@@ -12,6 +12,8 @@ The LeechCore library is supported on 32/64-bit **Windows** (`.dll`), x64 and ar
 
 For detailed information about individual memory acquisition methods, the API and related examples please check out the [LeechCore wiki](https://github.com/ufrisk/LeechCore/wiki).
 
+Looking for a logging-enabled build of `leechcore.dll` to help debug FPGA DMA interactions? See the [logging guide](docs/logging.md) for details about the GitHub Actions workflow, configuration options and sample logs.
+
 
 
 Memory Acquisition Methods:

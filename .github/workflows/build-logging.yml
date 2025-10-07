@@ -1,0 +1,32 @@
+name: Build LeechCore DLL (logging)
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        configuration: [Release]
+        platform: [x64]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build LeechCore
+        run: msbuild LeechCore.sln /m /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }}
+
+      - name: Upload LeechCore artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: leechcore-${{ matrix.platform }}-${{ matrix.configuration }}
+          path: |
+            files/${{ matrix.platform }}/leechcore.dll
+            files/${{ matrix.platform }}/lib/leechcore.lib
+            files/${{ matrix.platform }}/lib/leechcore.pdb
+          if-no-files-found: warn
