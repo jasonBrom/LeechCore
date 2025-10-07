@@ -11,7 +11,7 @@
 1. 检出源码。
 2. 配置 MSBuild 环境。
 3. 以 `Release`、`x64` 配置编译 `LeechCore.sln`，生成带日志能力的 `leechcore.dll`。
-4. 打包生成的 `files/x64/leechcore.dll`、`files/x64/lib/leechcore.lib` 与 `files/x64/lib/leechcore.pdb` 作为构建工件。
+4. 打包生成的 `files/leechcore.dll`、`files/lib/leechcore.lib` 与 `files/lib/leechcore.pdb` 作为构建工件。
 
 在 GitHub Actions 详情页选择对应的运行记录，展开 **Artifacts** 区域即可下载构建好的 DLL 及符号文件，方便在本地或 CI 环境中直接使用。
 

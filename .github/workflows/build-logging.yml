@@ -26,7 +26,7 @@ jobs:
         with:
           name: leechcore-${{ matrix.platform }}-${{ matrix.configuration }}
           path: |
-            files/${{ matrix.platform }}/leechcore.dll
-            files/${{ matrix.platform }}/lib/leechcore.lib
-            files/${{ matrix.platform }}/lib/leechcore.pdb
+            files/leechcore.dll
+            files/lib/leechcore.lib
+            files/lib/leechcore.pdb
           if-no-files-found: warn
