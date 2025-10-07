@@ -70,4 +70,16 @@ BOOL LcMemMap_SetRangesFromText(_In_ PLC_CONTEXT ctxLC, _In_ PBYTE pb, _In_ DWOR
 */
 VOID LcCreate_FetchDeviceParameter(_Inout_ PLC_CONTEXT ctxLC);
 
+#define LEECHCORE_LOG_LEVEL_MINIMUM         0
+#define LEECHCORE_LOG_LEVEL_VERBOSE         2
+
+BOOL LcLogIsEnabled(_In_ DWORD dwLevel);
+VOID LcLogMessage(_In_ DWORD dwLevel, _In_z_ LPCSTR szFormat, ...);
+VOID LcLogDumpBuffer(
+    _In_ DWORD dwLevel,
+    _In_opt_z_ LPCSTR szPrefix,
+    _In_ QWORD qwBaseAddress,
+    _In_reads_opt_(cb) const BYTE *pb,
+    _In_ DWORD cb);
+
 #endif /* __LEECHCORE_INTERNAL_H__ */
