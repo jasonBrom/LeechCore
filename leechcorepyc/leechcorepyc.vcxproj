@@ -167,9 +167,9 @@
       </Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>copy $(OutDir)test.py W:\bin /y
-copy $(OutDir)leechcore.dll W:\bin /y
-copy $(OutDir)leechcorepyc.pyd W:\bin /y
+      <Command>if exist W:\bin\ copy $(OutDir)test.py W:\bin /y
+if exist W:\bin\ copy $(OutDir)leechcore.dll W:\bin /y
+if exist W:\bin\ copy $(OutDir)leechcorepyc.pyd W:\bin /y
 copy $(OutDir)leechcorepyc.pyd $(OutDir)\agent\x64\Plugins\leechcorepyc\ /y
 </Command>
     </PostBuildEvent>
@@ -223,9 +223,9 @@ copy $(OutDir)leechcorepyc.pyd $(OutDir)\agent\x64\Plugins\leechcorepyc\ /y
       </Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>copy $(OutDir)test.py W:\bin /y
-copy $(OutDir)leechcore.dll W:\bin /y
-copy $(OutDir)leechcorepyc.pyd W:\bin /y
+      <Command>if exist W:\bin\ copy $(OutDir)test.py W:\bin /y
+if exist W:\bin\ copy $(OutDir)leechcore.dll W:\bin /y
+if exist W:\bin\ copy $(OutDir)leechcorepyc.pyd W:\bin /y
 copy $(OutDir)leechcorepyc.pyd $(OutDir)\agent\x64\Plugins\leechcorepyc\ /y
 </Command>
     </PostBuildEvent>
@@ -275,9 +275,9 @@ copy $(OutDir)leechcorepyc.pyd $(OutDir)\agent\x64\Plugins\leechcorepyc\ /y
       </Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>copy $(OutDir)test.py W:\bin /y
-copy $(OutDir)leechcore.dll W:\bin /y
-copy $(OutDir)leechcorepyc.pyd W:\bin /y
+      <Command>if exist W:\bin\ copy $(OutDir)test.py W:\bin /y
+if exist W:\bin\ copy $(OutDir)leechcore.dll W:\bin /y
+if exist W:\bin\ copy $(OutDir)leechcorepyc.pyd W:\bin /y
 copy $(OutDir)leechcorepyc.pyd $(OutDir)\agent\x64\Plugins\leechcorepyc\ /y
 </Command>
     </PostBuildEvent>
