@@ -6,6 +6,27 @@
 
 #include "leechcorepyc.h"
 
+#if !LEECHCOREPYC_HAVE_PYTHON
+
+PyObject *g_pPyType_BarRequest = NULL;
+
+// Without Python we cannot expose the BAR request helpers. Return NULL/FAIL so
+// higher level code can detect the missing functionality gracefully.
+PyObj_BarRequest* LcPy_BarRequest_InitializeInternal(_In_ PyObj_LeechCore *pyLC, _In_ PLC_BAR_REQUEST pReq)
+{
+    (void)pyLC;
+    (void)pReq;
+    return NULL;
+}
+
+_Success_(return) BOOL LcPy_BarRequest_InitializeType(PyObject *pModule)
+{
+    (void)pModule;
+    return FALSE;
+}
+
+#else
+
 PyObject *g_pPyType_BarRequest = NULL;
 
 // (PBYTE) -> None
@@ -213,3 +234,5 @@ BOOL LcPy_BarRequest_InitializeType(PyObject *pModule)
     }
     return g_pPyType_BarRequest ? TRUE : FALSE;
 }
+
+#endif /* LEECHCOREPYC_HAVE_PYTHON */

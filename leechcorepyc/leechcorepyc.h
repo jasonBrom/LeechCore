@@ -6,6 +6,22 @@
 #ifndef __LEECHCOREPYC_H__
 #define __LEECHCOREPYC_H__
 
+#include <leechcore.h>
+#include "oscompatibility.h"
+
+#if !defined(LEECHCOREPYC_HAVE_PYTHON)
+#if defined(__has_include)
+#if __has_include(<Python.h>)
+#define LEECHCOREPYC_HAVE_PYTHON 1
+#else
+#define LEECHCOREPYC_HAVE_PYTHON 0
+#endif
+#else
+#define LEECHCOREPYC_HAVE_PYTHON 1
+#endif
+#endif /* !defined(LEECHCOREPYC_HAVE_PYTHON) */
+
+#if LEECHCOREPYC_HAVE_PYTHON
 #define PY_SSIZE_T_CLEAN
 #define Py_LIMITED_API 0x03060000
 #ifdef _DEBUG
@@ -17,11 +33,26 @@
 #include <Python.h>
 #include <structmember.h>
 #endif
+#else
+#include <stddef.h>
 #ifdef _WIN32
 #include <Windows.h>
 #endif /* _WIN32 */
-#include <leechcore.h>
-#include "oscompatibility.h"
+typedef ptrdiff_t Py_ssize_t;
+typedef struct _fakePyTypeObject PyTypeObject;
+typedef struct _fakePyObject {
+    Py_ssize_t ob_refcnt;
+    PyTypeObject *ob_type;
+} PyObject;
+struct _fakePyTypeObject {
+    int unused;
+};
+#define PyObject_HEAD Py_ssize_t ob_refcnt; PyTypeObject *ob_type;
+#endif
+
+#ifdef _WIN32
+#include <Windows.h>
+#endif /* _WIN32 */
 
 extern PyObject *g_pPyType_LeechCore;
 extern PyObject *g_pPyType_BarRequest;
