@@ -6,17 +6,14 @@
 // (c) Ulf Frisk, 2020-2025
 // Author: Ulf Frisk, pcileech@frizk.net
 //
-#define Py_LIMITED_API 0x03060000
-#ifdef _DEBUG
-#undef _DEBUG
-#include <python.h>
-#define _DEBUG
-#else
-#include <python.h>
-#endif
-#include <Windows.h>
-#include <leechcore.h>
 #include "leechcorepyc.h"
+
+#if LEECHCOREPYC_HAVE_PYTHON
+
+#if defined(_WIN32)
+#include <Windows.h>
+#endif
+#include <leechcore.h>
 
 #define PYTHON_PATH_MAX             7*MAX_PATH
 #define PYTHON_PATH_DELIMITER       L";"
@@ -117,3 +114,31 @@ VOID LeechCorePyC_EmbClose()
         Py_FinalizeEx();
     } __except(EXCEPTION_EXECUTE_HANDLER) { ; }
 }
+
+#else
+
+#if defined(_WIN32)
+#include <Windows.h>
+#endif
+
+// Stub implementations used when Python headers/libraries are unavailable.
+__declspec(dllexport)
+BOOL LeechCorePyC_EmbPythonInitialize(_In_ HMODULE hDllPython)
+{
+    (void)hDllPython;
+    return FALSE;
+}
+
+__declspec(dllexport)
+BOOL LeechCorePyC_EmbExecPyInMem(_In_ LPSTR szPythonProgram)
+{
+    (void)szPythonProgram;
+    return FALSE;
+}
+
+__declspec(dllexport)
+VOID LeechCorePyC_EmbClose()
+{
+}
+
+#endif /* LEECHCOREPYC_HAVE_PYTHON */

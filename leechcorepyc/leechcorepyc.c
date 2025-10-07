@@ -5,6 +5,20 @@
 //
 #include "leechcorepyc.h"
 
+#if !LEECHCOREPYC_HAVE_PYTHON
+
+PyObject *g_pPyType_LeechCore = NULL;
+PLC_CONFIG_ERRORINFO g_LEECHCORE_LAST_ERRORINFO = NULL;
+
+// The Python development headers/libraries are not available. Build a no-op
+// module that signals import failure instead of hard compilation errors.
+EXPORTED_FUNCTION PyObject* PyInit_leechcorepyc(void)
+{
+    return NULL;
+}
+
+#else
+
 PyObject *g_pPyType_LeechCore = NULL;
 PLC_CONFIG_ERRORINFO g_LEECHCORE_LAST_ERRORINFO = NULL;  // will be memory leaked - but it should be very rare.
 
@@ -897,3 +911,5 @@ EXPORTED_FUNCTION PyObject* PyInit_leechcorepyc(void)
     }
     return pPyModule;
 }
+
+#endif /* LEECHCOREPYC_HAVE_PYTHON */
