@@ -167,10 +167,13 @@
       </Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>if exist W:\bin\ copy $(OutDir)test.py W:\bin /y
-if exist W:\bin\ copy $(OutDir)leechcore.dll W:\bin /y
-if exist W:\bin\ copy $(OutDir)leechcorepyc.pyd W:\bin /y
-copy $(OutDir)leechcorepyc.pyd $(OutDir)\agent\x64\Plugins\leechcorepyc\ /y
+      <Command>if exist W:\bin\ (
+copy "$(OutDir)test.py" W:\bin /y
+copy "$(OutDir)leechcore.dll" W:\bin /y
+copy "$(OutDir)leechcorepyc.pyd" W:\bin /y
+)
+if not exist "$(OutDir)agent\x64\Plugins\leechcorepyc\" mkdir "$(OutDir)agent\x64\Plugins\leechcorepyc\"
+copy "$(OutDir)leechcorepyc.pyd" "$(OutDir)agent\x64\Plugins\leechcorepyc\" /y
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -223,10 +226,13 @@ copy $(OutDir)leechcorepyc.pyd $(OutDir)\agent\x64\Plugins\leechcorepyc\ /y
       </Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>if exist W:\bin\ copy $(OutDir)test.py W:\bin /y
-if exist W:\bin\ copy $(OutDir)leechcore.dll W:\bin /y
-if exist W:\bin\ copy $(OutDir)leechcorepyc.pyd W:\bin /y
-copy $(OutDir)leechcorepyc.pyd $(OutDir)\agent\x64\Plugins\leechcorepyc\ /y
+      <Command>if exist W:\bin\ (
+copy "$(OutDir)test.py" W:\bin /y
+copy "$(OutDir)leechcore.dll" W:\bin /y
+copy "$(OutDir)leechcorepyc.pyd" W:\bin /y
+)
+if not exist "$(OutDir)agent\x64\Plugins\leechcorepyc\" mkdir "$(OutDir)agent\x64\Plugins\leechcorepyc\"
+copy "$(OutDir)leechcorepyc.pyd" "$(OutDir)agent\x64\Plugins\leechcorepyc\" /y
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -275,10 +281,13 @@ copy $(OutDir)leechcorepyc.pyd $(OutDir)\agent\x64\Plugins\leechcorepyc\ /y
       </Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>if exist W:\bin\ copy $(OutDir)test.py W:\bin /y
-if exist W:\bin\ copy $(OutDir)leechcore.dll W:\bin /y
-if exist W:\bin\ copy $(OutDir)leechcorepyc.pyd W:\bin /y
-copy $(OutDir)leechcorepyc.pyd $(OutDir)\agent\x64\Plugins\leechcorepyc\ /y
+      <Command>if exist W:\bin\ (
+copy "$(OutDir)test.py" W:\bin /y
+copy "$(OutDir)leechcore.dll" W:\bin /y
+copy "$(OutDir)leechcorepyc.pyd" W:\bin /y
+)
+if not exist "$(OutDir)agent\x64\Plugins\leechcorepyc\" mkdir "$(OutDir)agent\x64\Plugins\leechcorepyc\"
+copy "$(OutDir)leechcorepyc.pyd" "$(OutDir)agent\x64\Plugins\leechcorepyc\" /y
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
